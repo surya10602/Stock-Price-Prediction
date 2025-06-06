@@ -1,0 +1,102 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sb
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from xgboost import XGBClassifier
+from sklearn import metrics
+from sklearn.metrics import ConfusionMatrixDisplay
+
+import warnings
+warnings.filterwarnings('ignore')
+
+# Load data
+df = pd.read_csv('dataset_path')
+
+# Convert Date and extract parts
+df['Date'] = pd.to_datetime(df['Date'])
+df['day'] = df['Date'].dt.day
+df['month'] = df['Date'].dt.month
+df['year'] = df['Date'].dt.year
+
+# Remove unnecessary columns
+if 'Adj Close' in df.columns:
+    df = df.drop(['Adj Close'], axis=1)
+
+# Feature engineering
+df['is_quarter_end'] = np.where(df['month'] % 3 == 0, 1, 0)
+df['open-close'] = df['Open'] - df['Close']
+df['low-high'] = df['Low'] - df['High']
+df['target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
+df = df[:-1]  # drop last row (target is NaN)
+
+# Visualize Close price
+plt.figure(figsize=(15,5))
+plt.plot(df['Close'])
+plt.title('Tesla Close Price')
+plt.ylabel('Price in USD')
+plt.show()
+
+# Distribution plots
+features = ['Open', 'High', 'Low', 'Close', 'Volume']
+plt.subplots(figsize=(20,10))
+for i, col in enumerate(features):
+    plt.subplot(2, 3, i+1)
+    sb.histplot(df[col], kde=True)
+plt.show()
+
+# Boxplots
+plt.subplots(figsize=(20,10))
+for i, col in enumerate(features):
+    plt.subplot(2,3,i+1)
+    sb.boxplot(y=df[col])
+plt.show()
+
+# Yearly average bar charts
+data_grouped = df.drop('Date', axis=1).groupby('year').mean()
+plt.subplots(figsize=(20,10))
+for i, col in enumerate(['Open', 'High', 'Low', 'Close']):
+    plt.subplot(2,2,i+1)
+    data_grouped[col].plot.bar(title=col)
+plt.show()
+
+# Target distribution
+plt.pie(df['target'].value_counts(), labels=[0, 1], autopct='%1.1f%%')
+plt.title('Target Class Distribution')
+plt.show()
+
+# Correlation heatmap
+corr_matrix = df.drop('Date', axis=1).corr() if 'Date' in df.columns else df.corr()
+plt.figure(figsize=(10,10))
+sb.heatmap(corr_matrix > 0.9, annot=True, cbar=False)
+plt.show()
+
+# Modeling
+features = df[['open-close', 'low-high', 'is_quarter_end']]
+target = df['target']
+scaler = StandardScaler()
+features_scaled = scaler.fit_transform(features)
+
+X_train, X_valid, Y_train, Y_valid = train_test_split(
+    features_scaled, target, test_size=0.1, random_state=2022)
+
+models = [
+    LogisticRegression(),
+    SVC(kernel='poly', probability=True),
+    XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+]
+
+for model in models:
+    model.fit(X_train, Y_train)
+    print(f'{model} :')
+    print('Training ROC AUC :', metrics.roc_auc_score(Y_train, model.predict_proba(X_train)[:, 1]))
+    print('Validation ROC AUC :', metrics.roc_auc_score(Y_valid, model.predict_proba(X_valid)[:, 1]))
+    print()
+
+    ConfusionMatrixDisplay.from_estimator(model, X_valid, Y_valid)
+    plt.title(f"Confusion Matrix - {type(model).__name__}")
+    plt.show()
